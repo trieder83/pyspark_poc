@@ -1,0 +1,137 @@
+
+!! 2 files could not be commited in github - get them elsewhere !!
+remote: error: File spark-solr-3.6.4-shaded.jar is 146.13 MB; this exceeds GitHub's file size limit of 100.00 MB
+remote: error: File spark-solr-3.8.0-shaded.jar is 159.17 MB; this exceeds GitHub's file size limit of 100.00 MB
+test
+----
+
+ docker exec -it spark-master /spark/bin/pyspark --jars /ojdbc8.jar,/spark-solr-3.6.4-shaded.jar
+
+docker cp aws-java-sdk-s3-1.11.524.jar spark-worker-1:/
+docker cp aws-java-sdk-s3-1.11.524.jar spark-master:/
+
+docker cp hadoop-aws-2.9.2.jar spark-worker-1:/
+docker cp hadoop-aws-2.9.2.jar spark-master:/
+
+for x in "hadoop-common-2.9.2.jar"; do 
+docker cp $x spark-worker-1:/
+docker cp $x spark-master:/
+done 
+
+docker exec -it spark-master /spark/bin/pyspark --jars /ojdbc8.jar,/spark-solr-3.6.4-shaded.jar,aws-java-sdk-s3-1.11.524.jar,hadoop-aws-2.9.2.jar,hadoop-common-2.9.2.jar
+
+
+spark = SparkSession.builder \
+            .appName("my_app") \
+            .config('spark.sql.codegen.wholeStage', False) \
+            .getOrCreate()
+spark._jsc.hadoopConfiguration().set("fs.s3a.awsAccessKeyId", "AKIAIOSFODNN7EXAMPLE")
+spark._jsc.hadoopConfiguration().set("fs.s3a.awsSecretAccessKey", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+spark._jsc.hadoopConfiguration().set("fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
+spark._jsc.hadoopConfiguration().set("com.amazonaws.services.s3.enableV4", "true")
+spark._jsc.hadoopConfiguration().set("fs.s3a.path.style.access", "true")
+spark._jsc.hadoopConfiguration().set("fs.s3a.aws.credentials.provider","org.apache.hadoop.fs.s3a.BasicAWSCredentialsProvider")
+spark._jsc.hadoopConfiguration().set("fs.s3a.endpoint", "192.168.1.12:9001")
+
+df = spark.read.option("delimiter", ",").csv("s3a://data/FL_insurance_sample.csv", header = True)
+
+
+---------------------------------
+Load data from oracle
+query = "(select * from data1) emp"
+url = "jdbc:oracle:thin:test/test@//192.168.1.15:1521/demo01"
+
+empDF = spark.read \
+    .format("jdbc") \
+    .option("url", url) \
+    .option("dbtable", query) \
+    .option("user", "test") \
+    .option("password", "test") \
+    .option("driver", "oracle.jdbc.driver.OracleDriver") \
+    .option("fetchsize",250) \
+    .load()
+
+empDF.printSchema()
+
+empDF.show()
+
+empDF.write \
+    .format("jdbc") \
+    .option("url", url) \
+    .option("dbtable", "test.dataout") \
+    .option("user", "test") \
+    .option("password", "test") \
+    .save()
+
+empDF.write \
+  .option("createTableColumnTypes", "nr NUMBER, text1 VARCHAR(1024)") \
+  .jdbc("url", "test.dataout", properties={"user": "test", "password": "test"})
+
+
+Write parquet
+---------------
+empDF.write.parquet("/data/test_table.pq")
+
+mergedDF = spark.read.option("mergeSchema", "true").parquet("/data/test_table")
+
+
+
+ETL
+-----------
+from pyspark.sql import SparkSession
+from pyspark.sql import SQLContext
+
+groupDF = empDF.groupBy('NR').count()
+
+
+def parse(todo):
+    return d   
+
+rdd2 = rdd.map(parse)
+
+
+Elasticsearch
+------------------
+es_write_conf = {
+        "es.nodes" : "localhost",
+        "es.port" : "9200",
+        "es.resource" : 'spark/emp',
+        "es.input.json": "yes",
+        "es.mapping.id": "n"
+    }
+
+# df to rdd
+rdd = empDF.rdd.map(list)
+or
+rdd = empDF.rdd.flatMap(list)
+
+rdd.saveAsNewAPIHadoopFile( path='-', outputFormatClass="org.elasticsearch.hadoop.mr.EsOutputFormat", keyClass="org.apache.hadoop.io.NullWritable", valueClass="org.elasticsearch.hadoop.mr.LinkedMapWritable", conf=es_write_conf)
+
+# write df
+   val spark = SparkSession
+    .builder()
+    .appName("WriteToES")
+    .master("local[*]")
+    .config("spark.es.nodes","<IP-OF-ES-NODE>")
+    .config("spark.es.port","<ES-PORT>")
+    .config("spark.es.nodes.wan.only","true") //Needed for ES on AWS
+    .getOrCreate()
+
+
+empDF.write\
+    .format("org.elasticsearch.spark.sql")\
+    .mode('append')\
+    .option("spark.es.resource","spark/emp")\
+    .save()
+
+# read es
+conf = SparkConf()
+conf.set("es.nodes", "192.168.1.15:9200")
+sc = SparkContext(conf=conf)
+df = sqlContext.read\
+  .option("es.resource", "filght_price/filght_price")\
+  .format("org.elasticsearch.spark.sql")\
+  .load()
+
+df.show()
+
